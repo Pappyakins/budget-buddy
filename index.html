@@ -798,17 +798,39 @@ $("btn-save-settings").onclick=()=>{
   save(); viewPeriod=null; render(); toast("Settings saved ✓");
 };
 function csvEsc(v){ v=String(v??""); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }
-$("btn-export").onclick=()=>{
+/* File exports use Android's native share sheet in the app: the WebView
+   silently swallows blob downloads, so we write the file and share it. */
+function isNativeApp(){
+  return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+}
+function blobToBase64(blob){
+  return new Promise((resolve,reject)=>{
+    const r=new FileReader();
+    r.onload=()=>resolve(String(r.result).split(",")[1]);
+    r.onerror=reject;
+    r.readAsDataURL(blob);
+  });
+}
+$("btn-export").onclick=async ()=>{
   const rows=[["date","type","category","note","amount","currency"]];
   DB.transactions.slice().sort((a,b)=>a.date.localeCompare(b.date)).forEach(t=>{
     rows.push([t.date,t.type,t.type==="income"?"Income":catName(t.categoryId),t.note||"",t.amount.toFixed(2),DB.settings.currency]);
   });
   const csv=rows.map(r=>r.map(csvEsc).join(",")).join("\n");
   const blob=new Blob([csv],{type:"text/csv"});
-  const a=document.createElement("a");
-  a.href=URL.createObjectURL(blob); a.download="budget-buddy-transactions.csv"; a.click();
-  setTimeout(()=>URL.revokeObjectURL(a.href),4000);
-  toast("CSV downloaded ✓");
+  const fname="budget-buddy-transactions.csv";
+  try{
+    if(isNativeApp() && window.__nativeSharePdf){
+      await window.__nativeSharePdf(await blobToBase64(blob), fname, "Budget Buddy transactions");
+    }else{
+      const a=document.createElement("a");
+      a.href=URL.createObjectURL(blob); a.download=fname; a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+    }
+    toast("CSV exported ✓");
+  }catch(err){
+    toast("Export failed: "+(err&&err.message?err.message:String(err)));
+  }
 };
 $("btn-reset").onclick=()=>{
   if(confirm("Erase ALL Budget Buddy data and start over?")){ localStorage.removeItem(LS_KEY); location.reload(); }
@@ -929,5 +951,6 @@ function startReceiptScan(opts){
   input.click();
 }
 </script>
+<script src="share-bridge.js"></script>
 </body>
 </html>
