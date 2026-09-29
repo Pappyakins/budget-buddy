@@ -141,11 +141,13 @@ nav.bottom .in{max-width:560px;margin:0 auto;display:grid;grid-template-columns:
   <div class="ob-hero">
     <div class="logo">💰</div>
     <h1>Budget Buddy</h1>
-    <p>Your biweekly money companion.<br>Track pay periods, tame spending,<br>and get smart money tips.</p>
+    <p id="ob-hero-sub">Your biweekly money companion.<br>Track pay periods, tame spending,<br>and get smart money tips.</p>
   </div>
   <div class="card" id="ob-step1">
     <h2>How much do you earn per paycheque?</h2>
-    <p class="muted">Your take-home pay, every 2 weeks.</p>
+    <label class="f">How often are you paid?</label>
+    <div class="seg" id="ob-freq"><button data-v="biweekly" class="on">Biweekly</button><button data-v="monthly">Monthly</button></div>
+    <p class="muted" id="ob-amount-hint">Your take-home pay, every 2 weeks.</p>
     <label class="f">Pay amount</label>
     <input id="ob-amount" type="number" inputmode="decimal" min="0" step="0.01" placeholder="e.g. 1800.00">
     <label class="f">Currency</label>
@@ -160,7 +162,7 @@ nav.bottom .in{max-width:560px;margin:0 auto;display:grid;grid-template-columns:
   </div>
   <div class="card hidden" id="ob-step2">
     <h2>When is your next (or most recent) payday?</h2>
-    <p class="muted">We'll build 14-day periods around it.</p>
+    <p class="muted" id="ob-paydate-hint">We'll build 14-day periods around it.</p>
     <label class="f">Pay date</label>
     <input id="ob-paydate" type="date">
     <div class="modal-actions">
@@ -195,7 +197,7 @@ nav.bottom .in{max-width:560px;margin:0 auto;display:grid;grid-template-columns:
       <div class="disclaimer">⚠️ These tips are general information generated from your own numbers — not professional financial advice. For big decisions, talk to a qualified advisor.</div>
     </div>
     <div class="card"><h2>Spending by category</h2><div id="donut-wrap"></div><div class="legend" id="donut-legend"></div></div>
-    <div class="card"><h2>Income vs spending trend</h2><div id="trend-wrap"></div><p class="muted" style="margin:8px 0 0">Last 6 pay periods (income green, spending purple).</p></div>
+    <div class="card"><h2>Income vs spending trend</h2><div id="trend-wrap"></div><p class="muted" id="trend-cap" style="margin:8px 0 0">Last 6 pay periods (income green, spending purple).</p></div>
   </section>
 
   <!-- TRANSACTIONS -->
@@ -224,7 +226,9 @@ nav.bottom .in{max-width:560px;margin:0 auto;display:grid;grid-template-columns:
     </div>
     <div class="card"><h2>⚙️ Settings</h2>
       <label class="f">Pay amount (per paycheque)</label><input id="set-pay" type="number" inputmode="decimal" min="0" step="0.01">
-      <label class="f">Pay date (periods are 14 days from here)</label><input id="set-paydate" type="date">
+      <label class="f" id="set-paydate-label">Pay date (periods are 14 days from here)</label><input id="set-paydate" type="date">
+      <label class="f">Pay frequency</label>
+      <div class="seg" id="set-freq"><button data-v="biweekly">Biweekly</button><button data-v="monthly">Monthly</button></div>
       <label class="f">Currency</label>
       <select id="set-currency"><option value="CAD">CAD</option><option value="USD">USD</option><option value="GBP">GBP</option><option value="EUR">EUR</option><option value="NGN">NGN</option></select>
       <label class="f">Auto-add paycheck each period</label>
@@ -300,16 +304,28 @@ function money(n){
 }
 
 /* ---------------- pay periods ---------------- */
+function freq(){ return (DB.settings&&DB.settings.frequency)||"biweekly"; }
 function payDate(){ return parseD(DB.settings.payDate); }
 function periodIndexOf(dateStr){
-  const diff = Math.floor((parseD(dateStr) - payDate())/DAY);
+  const d=parseD(dateStr), p=payDate();
+  if(freq()==="monthly") return (d.getFullYear()*12+d.getMonth())-(p.getFullYear()*12+p.getMonth());
+  const diff = Math.floor((d - p)/DAY);
   return Math.floor(diff/14);
 }
 function currentPeriodIdx(){ return periodIndexOf(todayStr()); }
-function periodStart(idx){ const d=new Date(payDate()); d.setDate(d.getDate()+idx*14); return d; }
+function periodStart(idx){
+  if(freq()==="monthly"){ const p=payDate(); return new Date(p.getFullYear(), p.getMonth()+idx, 1); }
+  const d=new Date(payDate()); d.setDate(d.getDate()+idx*14); return d;
+}
 function periodRange(idx){
-  const s=periodStart(idx), e=new Date(s); e.setDate(e.getDate()+13);
-  const o={month:"short",day:"numeric"};
+  const s=periodStart(idx), o={month:"short",day:"numeric"};
+  if(freq()==="monthly"){
+    const e=new Date(s.getFullYear(), s.getMonth()+1, 0);
+    return {start:fmtD(s), end:fmtD(e),
+      label:s.toLocaleDateString(undefined,{month:"long",year:"numeric"}),
+      range:s.toLocaleDateString(undefined,o)+" – "+e.toLocaleDateString(undefined,o)+", "+e.getFullYear()};
+  }
+  const e=new Date(s); e.setDate(e.getDate()+13);
   return {start:fmtD(s), end:fmtD(e), label:"Period "+(idx+1), range:s.toLocaleDateString(undefined,o)+" – "+e.toLocaleDateString(undefined,o)+", "+e.getFullYear()};
 }
 let viewPeriod = null; // null => current
@@ -319,9 +335,14 @@ function activePeriod(){ return viewPeriod===null?currentPeriodIdx():viewPeriod;
 function ensurePaycheck(idx){
   if(!DB.settings.autoPaycheck) return;
   const r=periodRange(idx);
+  let payDay=r.start;
+  if(freq()==="monthly"){
+    const s=periodStart(idx), last=new Date(s.getFullYear(), s.getMonth()+1, 0).getDate();
+    payDay=fmtD(new Date(s.getFullYear(), s.getMonth(), Math.min(payDate().getDate(), last)));
+  }
   let auto=DB.transactions.find(t=>t.type==="income"&&t.auto==="pay"&&t.period===idx);
-  if(auto){ auto.amount=DB.settings.payAmount; auto.date=r.start; }
-  else DB.transactions.push({id:uid(),type:"income",amount:DB.settings.payAmount,categoryId:null,note:"Paycheck",date:r.start,period:idx,auto:"pay"});
+  if(auto){ auto.amount=DB.settings.payAmount; auto.date=payDay; }
+  else DB.transactions.push({id:uid(),type:"income",amount:DB.settings.payAmount,categoryId:null,note:"Paycheck",date:payDay,period:idx,auto:"pay"});
   save();
 }
 function txnsForPeriod(idx){ return DB.transactions.filter(t=>t.period===idx); }
@@ -351,6 +372,13 @@ function actionsHTML(primary, secondary){
 /* ---------------- onboarding ---------------- */
 function showOnboarding(){ $("onboarding").classList.add("show"); $("app").classList.add("hidden"); }
 function showApp(){ $("onboarding").classList.remove("show"); $("app").classList.remove("hidden"); }
+document.querySelectorAll("#ob-freq button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("#ob-freq button").forEach(x=>x.classList.remove("on")); b.classList.add("on");
+  const m=b.dataset.v==="monthly";
+  $("ob-amount-hint").textContent=m?"Your take-home pay, each month.":"Your take-home pay, every 2 weeks.";
+  $("ob-paydate-hint").textContent=m?"We\u2019ll track calendar months \u2014 your paycheck lands on this day each month.":"We\u2019ll build 14-day periods around it.";
+  $("ob-hero-sub").innerHTML=(m?"Your monthly money companion.":"Your biweekly money companion.")+"<br>Track pay periods, tame spending,<br>and get smart money tips.";
+});
 $("ob-next1").onclick=()=>{
   const amt=parseFloat($("ob-amount").value);
   if(!(amt>0)){ toast("Enter your pay amount first"); return; }
@@ -366,7 +394,7 @@ $("ob-start").onclick=()=>{
   const pd=$("ob-paydate").value;
   if(!(amt>0)){ toast("Enter your pay amount first"); return; }
   if(!pd){ toast("Pick a pay date"); return; }
-  DB={ settings:{payAmount:amt,payDate:pd,currency:$("ob-currency").value,autoPaycheck:true},
+  DB={ settings:{payAmount:amt,payDate:pd,currency:$("ob-currency").value,autoPaycheck:true,frequency:document.querySelector("#ob-freq .on").dataset.v},
        categories:seedCategories(), transactions:[], goals:[], recurring:[] };
   save(); ensurePaycheck(currentPeriodIdx()); showApp(); render();
   toast("Welcome to Budget Buddy! 🎉");
@@ -393,7 +421,8 @@ function render(){
   $("period-range").textContent = r.range;
   $("btn-prev-period").disabled = idx<=0;
   $("btn-next-period").disabled = idx>=cur;
-  $("hdr-sub").textContent = "Paid "+money(DB.settings.payAmount)+" biweekly";
+  $("hdr-sub").textContent = "Paid "+money(DB.settings.payAmount)+(freq()==="monthly"?" monthly":" every 2 weeks");
+  $("trend-cap").textContent = freq()==="monthly"?"Last 6 months (income green, spending purple).":"Last 6 pay periods (income green, spending purple).";
   ({home:renderHome,txns:renderTxns,budgets:renderBudgets,goals:renderGoals,more:renderMore})[activeView]();
 }
 $("btn-prev-period").onclick=()=>{ const c=currentPeriodIdx(); viewPeriod=(viewPeriod===null?c:viewPeriod)-1; if(viewPeriod<0)viewPeriod=0; render(); };
@@ -436,7 +465,7 @@ function renderTrend(){
     const x=pad+k*bw, ih=d.inc/max*(H-40), eh=d.exp/max*(H-40);
     bars+=`<rect x="${(x+bw/2-11).toFixed(1)}" y="${(H-24-ih).toFixed(1)}" width="10" height="${ih.toFixed(1)}" rx="3" fill="#10b981"/>
            <rect x="${(x+bw/2+1).toFixed(1)}" y="${(H-24-eh).toFixed(1)}" width="10" height="${eh.toFixed(1)}" rx="3" fill="#7c3aed"/>
-           <text x="${(x+bw/2).toFixed(1)}" y="${H-8}" text-anchor="middle" font-size="9" fill="#667085">P${d.i+1}</text>`;
+           <text x="${(x+bw/2).toFixed(1)}" y="${H-8}" text-anchor="middle" font-size="9" fill="#667085">${freq()==="monthly"?periodStart(d.i).toLocaleDateString(undefined,{month:"short"}):"P"+(d.i+1)}</text>`;
   });
   $("trend-wrap").innerHTML=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto"><line x1="${pad}" y1="${H-24}" x2="${W-pad}" y2="${H-24}" stroke="#e6eaf2"/>${bars}</svg>`;
 }
@@ -485,9 +514,9 @@ function coachTips(idx){
     else if(pct>=0.9) tips.push({e:"🟡",t:"Near limit: "+c.name,d:`${money(spent)} of ${money(c.budget)} used (${(pct*100).toFixed(0)}%). Ease off for the rest of the period.`,tone:"warn"});
   });
   // 5. emergency fund
-  const avgBi=historyAvgExpense(6);
-  if(avgBi>0){
-    const monthly=avgBi*26/12, target3=monthly*3;
+  const avgPer=historyAvgExpense(6);
+  if(avgPer>0){
+    const monthly=freq()==="monthly"?avgPer:avgPer*26/12, target3=monthly*3;
     const savedAll=DB.goals.reduce((a,g)=>a+(g.saved||0),0);
     const pct=target3>0?savedAll/target3:0;
     if(pct<1) tips.push({e:"🛟",t:"Emergency fund",d:`Aim for 3 months of expenses ≈ ${money(target3)}. You're at ${(pct*100).toFixed(0)}% (${money(savedAll)} saved across goals). Even ${money(monthly*0.05)} per period gets you there steadily.`,tone:pct<0.25?"warn":"ok"});
@@ -601,7 +630,7 @@ function openRecurForm(id){
     ${field("Name",`<input id="f-name" maxlength="60" value="${esc(r?.name||"")}" placeholder="e.g. Rent, Netflix">`)}
     ${field("Amount",`<input id="f-amount" type="number" inputmode="decimal" min="0.01" step="0.01" value="${r?.amount??""}" placeholder="0.00">`)}
     ${field("Category",`<select id="f-cat">${catOpts}</select>`)}
-    ${field("Repeats",`<select id="f-freq"><option value="biweekly" ${r?.freq!=="monthly"?"selected":""}>Every pay period (biweekly)</option><option value="monthly" ${r?.freq==="monthly"?"selected":""}>Monthly</option></select>`)}
+    ${field("Repeats",`<select id="f-freq"><option value="biweekly" ${r?.freq!=="monthly"?"selected":""}>Every period</option><option value="monthly" ${r?.freq==="monthly"?"selected":""}>Monthly</option></select>`)}
     <p class="muted">Bills appear as one-tap suggestions each period until added.</p>
     ${actionsHTML(r?"Save":"Add")}${r?`<div style="margin-top:10px"><button class="btn danger" id="m-del">Delete</button></div>`:""}`);
   $("m-ok").onclick=()=>{
@@ -648,7 +677,7 @@ function openCatForm(id){
       <button data-v="need" class="${c?.kind==="need"?"on":""}">Need</button>
       <button data-v="want" class="${!c||c?.kind==="want"?"on":""}">Want</button>
       <button data-v="savings" class="${c?.kind==="savings"?"on":""}">Savings</button></div>`)}
-    ${field("Budget limit per pay period (0 = no limit)",`<input id="f-budget" type="number" inputmode="decimal" min="0" step="0.01" value="${c?.budget??""}" placeholder="0">`)}
+    ${field("Budget limit per period (0 = no limit)",`<input id="f-budget" type="number" inputmode="decimal" min="0" step="0.01" value="${c?.budget??""}" placeholder="0">`)}
     ${actionsHTML(c?"Save":"Add")}${c?`<div style="margin-top:10px"><button class="btn danger" id="m-del">Delete</button></div>`:""}`);
   const segWire=(el)=>el.querySelectorAll("button").forEach(b=>b.onclick=()=>{el.querySelectorAll("button").forEach(x=>x.classList.remove("on"));b.classList.add("on");});
   segWire($("f-icon")); segWire($("f-kind"));
@@ -732,16 +761,23 @@ function renderMore(){
   $("recur-list").innerHTML=DB.recurring.length?DB.recurring.map(r=>`
     <div class="txn" onclick="openRecurForm('${r.id}')">
       <div class="ic" style="background:#ede9fe">🔁</div>
-      <div class="mid"><div class="t">${esc(r.name)}</div><div class="s">${r.freq==="monthly"?"Monthly":"Every pay period"} · ${esc(catName(r.categoryId))}</div></div>
+      <div class="mid"><div class="t">${esc(r.name)}</div><div class="s">${r.freq==="monthly"?"Monthly":"Every period"} · ${esc(catName(r.categoryId))}</div></div>
       <div class="amt exp">${num(r.amount)}</div>
     </div>`).join(""):`<div class="empty"><span class="big">🔁</span>No recurring bills yet.<br>Add rent, subscriptions, etc.</div>`;
   $("set-pay").value=DB.settings.payAmount;
   $("set-paydate").value=DB.settings.payDate;
   $("set-currency").value=DB.settings.currency;
   document.querySelectorAll("#set-autopay button").forEach(b=>b.classList.toggle("on",(b.dataset.v==="1")===!!DB.settings.autoPaycheck));
+  document.querySelectorAll("#set-freq button").forEach(b=>b.classList.toggle("on",b.dataset.v===freq()));
+  $("set-paydate-label").textContent=freq()==="monthly"?"Pay date (paycheck lands on this day each month)":"Pay date (periods are 14 days from here)";
 }
 document.querySelectorAll("#set-autopay button").forEach(b=>b.onclick=()=>{
   document.querySelectorAll("#set-autopay button").forEach(x=>x.classList.remove("on")); b.classList.add("on");
+});
+document.querySelectorAll("#set-freq button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("#set-freq button").forEach(x=>x.classList.remove("on")); b.classList.add("on");
+  const m=b.dataset.v==="monthly";
+  $("set-paydate-label").textContent=m?"Pay date (paycheck lands on this day each month)":"Pay date (periods are 14 days from here)";
 });
 $("btn-save-settings").onclick=()=>{
   const amt=parseFloat($("set-pay").value), pd=$("set-paydate").value;
@@ -749,6 +785,7 @@ $("btn-save-settings").onclick=()=>{
   if(!pd){ toast("Pick a pay date"); return; }
   const oldAuto=DB.settings.autoPaycheck;
   DB.settings.payAmount=amt; DB.settings.payDate=pd; DB.settings.currency=$("set-currency").value;
+  DB.settings.frequency=document.querySelector("#set-freq .on").dataset.v;
   DB.settings.autoPaycheck=$("set-autopay").querySelector(".on").dataset.v==="1";
   // re-tag all transaction periods (pay date may have shifted)
   DB.transactions.forEach(t=>{ t.period=periodIndexOf(t.date); });
@@ -776,6 +813,7 @@ $("btn-reset").onclick=()=>{
 (function init(){
   DB=load();
   if(DB&&DB.settings&&DB.settings.payAmount>0&&DB.settings.payDate){
+    if(!DB.settings.frequency) DB.settings.frequency="biweekly"; // backfill older data
     // backfill any missing period tags (older data)
     DB.transactions.forEach(t=>{ if(t.period===undefined||t.period===null) t.period=periodIndexOf(t.date); });
     save(); showApp(); render();

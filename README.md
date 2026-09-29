@@ -1,12 +1,12 @@
 # Budget Buddy (standalone)
 
-A single-file, dependency-free biweekly budgeting web app. Open `index.html` in any
+A single-file, dependency-free budgeting web app with biweekly or monthly pay periods. Open `index.html` in any
 modern browser — or host it anywhere static (GitHub Pages, Netlify, etc.).
 
 ## Features
 
-- **Biweekly pay periods** — set pay amount + pay date; 14-day periods generated
-  automatically, browse current and past periods, each with its own ledger.
+- **Pay periods, your way** — biweekly or monthly; set pay amount + pay date and
+  periods generate automatically. Browse current and past periods, each with its own ledger.
 - **Income & expense tracking** — quick-add with amount, category, note, date;
   entries are editable and deletable. Paycheque auto-added each period.
 - **Category budgets** — per-period limits with progress bars and over/near-limit warnings.
